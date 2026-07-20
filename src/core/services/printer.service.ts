@@ -35,6 +35,7 @@ export interface PrintSettings {
   receipt_show_subtotal: string;
   receipt_show_change: string;
   cashier_name: string;
+  logo_base64?: string;
 }
 
 export interface ReceiptData {
@@ -166,6 +167,7 @@ export class PrinterService {
         receipt_show_subtotal: settingsMap['receipt_show_subtotal'] || 'true',
         receipt_show_change: settingsMap['receipt_show_change'] || 'true',
         cashier_name: settingsMap['cashier_name'] || '',
+        logo_base64: settingsMap['logo_base64'] || ''
       };
     } catch {
       // Use defaults if localStorage read fails
@@ -183,7 +185,7 @@ export class PrinterService {
         receipt_show_timestamp: 'true', receipt_timestamp_format: 'full',
         receipt_served_by_label: 'Served By', receipt_header_line: '',
         receipt_show_item_count: 'true', receipt_show_subtotal: 'true',
-        receipt_show_change: 'true', cashier_name: ''
+        receipt_show_change: 'true', cashier_name: '', logo_base64: ''
       };
     }
 
@@ -483,12 +485,20 @@ export class PrinterService {
     const s = this.settings!;
     const d = receiptData;
 
-    // Build a formatted HTML receipt for the browser print dialog
     const lines: string[] = [];
-    lines.push(`<div class="center bold large">${s.company_name}</div>`);
-    if (s.company_address) lines.push(`<div class="center">${s.company_address}</div>`);
-    if (s.company_phone) lines.push(`<div class="center">Tel: ${s.company_phone}</div>`);
-    lines.push('<div class="divider"></div>');
+    if (s.receipt_show_logo === 'true' && s.logo_base64) {
+      lines.push(`<div class="center" style="margin-bottom: 8px;"><img src="${s.logo_base64}" style="max-height: 80px;" alt="Logo" /></div>`);
+    }
+    
+    if (s.receipt_show_header === 'true') {
+      lines.push(`<div class="center bold large">${s.company_name}</div>`);
+      if (s.receipt_show_company_info === 'true') {
+        if (s.company_address) lines.push(`<div class="center">${s.company_address}</div>`);
+        if (s.company_phone) lines.push(`<div class="center">Tel: ${s.company_phone}</div>`);
+      }
+      if (s.receipt_header_line) lines.push(`<div class="center" style="margin-top: 4px;">${s.receipt_header_line}</div>`);
+      lines.push('<div class="divider"></div>');
+    }
 
     if (d) {
       lines.push(`<div>Receipt: <b>${d.receiptNumber}</b></div>`);
@@ -501,17 +511,27 @@ export class PrinterService {
       lines.push('<table><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Amount</th></tr>');
       for (const item of d.items) {
         lines.push(`<tr><td>${item.product_name}</td><td style="text-align:center">${item.quantity}</td><td style="text-align:right">${s.currency} ${item.line_total.toFixed(2)}</td></tr>`);
+      if (s.receipt_show_item_count === 'true') {
+        lines.push(`<div>Total Items: ${d.items.length}</div>`);
       }
       lines.push('</table>');
       lines.push('<div class="divider"></div>');
 
       // Totals
+      if (s.receipt_show_subtotal === 'true') {
+        lines.push(`<div class="right">Subtotal: ${s.currency} ${d.subtotal.toFixed(2)}</div>`);
+      }
       if (d.discount > 0) lines.push(`<div class="right">Discount: -${s.currency} ${d.discount.toFixed(2)}</div>`);
-      if (d.tax > 0) lines.push(`<div class="right">Tax: ${s.currency} ${d.tax.toFixed(2)}</div>`);
+      if (s.receipt_show_tax === 'true' && d.tax > 0) lines.push(`<div class="right">Tax: ${s.currency} ${d.tax.toFixed(2)}</div>`);
       lines.push(`<div class="right bold large">TOTAL: ${s.currency} ${d.total.toFixed(2)}</div>`);
-      lines.push(`<div class="right">Paid: ${s.currency} ${d.paid.toFixed(2)}</div>`);
-      if (d.change > 0) lines.push(`<div class="right">Change: ${s.currency} ${d.change.toFixed(2)}</div>`);
-      lines.push(`<div class="right">Method: ${d.paymentMethod}</div>`);
+      
+      if (s.receipt_show_payment_details === 'true') {
+        lines.push(`<div class="right">Paid: ${s.currency} ${d.paid.toFixed(2)}</div>`);
+        if (s.receipt_show_change === 'true' && d.change > 0) {
+          lines.push(`<div class="right">Change: ${s.currency} ${d.change.toFixed(2)}</div>`);
+        }
+        lines.push(`<div class="right">Method: ${d.paymentMethod}</div>`);
+      }
     }
 
     lines.push('<div class="divider"></div>');

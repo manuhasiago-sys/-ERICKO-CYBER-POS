@@ -2,8 +2,8 @@ import { Component, signal, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { supabase } from '../../../core/services/supabase.service';
 import { printerService } from '../../../core/services/printer.service';
+import { posService } from '../../../core/services/pos.service';
 import { ToastService } from '../../../core/services/toast.service';
 
 interface SaleRow {
@@ -18,8 +18,10 @@ interface SaleRow {
   change_amount: string;
   status: string;
   notes: string | null;
-  customers: { first_name: string; last_name: string } | null;
-  branches: { name: string } | null;
+  customer_id: string | null;
+  cashier: string;
+  payments: any[];
+  items: any[];
 }
 
 interface SaleItemRow {
@@ -52,7 +54,7 @@ interface SaleItemRow {
         <div class="search-input">
           <input
             type="text"
-            placeholder="Search by receipt number..."
+            placeholder="Search receipt, cashier, customer..."
             [value]="searchQuery()"
             (input)="onSearch($event)"
           />
@@ -64,6 +66,14 @@ interface SaleItemRow {
           <option value="completed">Completed</option>
           <option value="voided">Voided</option>
           <option value="refunded">Refunded</option>
+        </select>
+        <select [value]="paymentFilter()" (change)="onPaymentFilter($event)" class="filter-select">
+          <option value="">All Methods</option>
+          <option value="1">Cash</option>
+          <option value="2">M-Pesa</option>
+          <option value="3">Card</option>
+          <option value="4">Bank</option>
+          <option value="5">Credit Sale</option>
         </select>
       </div>
 
@@ -98,6 +108,8 @@ interface SaleItemRow {
                 <th>Date</th>
                 <th>Branch</th>
                 <th>Customer</th>
+                <th>Method</th>
+                <th>Cashier</th>
                 <th>Items</th>
                 <th>Total</th>
                 <th>Paid</th>
@@ -109,15 +121,10 @@ interface SaleItemRow {
               @for (sale of filteredSales(); track sale.id) {
                 <tr>
                   <td class="receipt-cell">{{ sale.receipt_number }}</td>
-                  <td>{{ sale.sale_date | date:'short' }}</td>
-                  <td>{{ sale.branches?.name || '-' }}</td>
-                  <td>
-                    @if (sale.customers) {
-                      {{ sale.customers.first_name }} {{ sale.customers.last_name }}
-                    } @else {
-                      <span class="text-muted">Walk-in</span>
-                    }
-                  </td>
+                  <td>{{ formatTimestamp(sale.sale_date) }}</td>
+                  <td>{{ sale.customer_id ? getCustomerName(sale.customer_id) : 'Walk-in' }}</td>
+                  <td>{{ getPaymentMethodName(sale.payments?.[0]?.payment_method_id) }}</td>
+                  <td>{{ sale.cashier || 'Admin' }}</td>
                   <td class="items-cell">
                     <button class="items-btn" (click)="viewSaleDetails(sale)">
                       View Items
@@ -170,7 +177,7 @@ interface SaleItemRow {
             <div class="sale-header">
               <div class="receipt-info">
                 <span class="receipt-number">{{ selectedSale()?.receipt_number }}</span>
-                <span class="sale-date">{{ selectedSale()?.sale_date | date:'medium' }}</span>
+                <span class="sale-date">{{ formatTimestamp(selectedSale()?.sale_date || '') }}</span>
               </div>
               <span class="status-badge large" [class.completed]="selectedSale()?.status === 'completed'">
                 {{ selectedSale()?.status }}
@@ -179,18 +186,16 @@ interface SaleItemRow {
 
             <div class="detail-grid">
               <div class="detail-item">
-                <span class="label">Branch</span>
-                <span class="value">{{ selectedSale()?.branches?.name || '-' }}</span>
+                <span class="label">Method</span>
+                <span class="value">{{ getPaymentMethodName(selectedSale()?.payments?.[0]?.payment_method_id) }}</span>
               </div>
               <div class="detail-item">
                 <span class="label">Customer</span>
-                <span class="value">
-                  @if (selectedSale()?.customers) {
-                    {{ selectedSale()!.customers!.first_name }} {{ selectedSale()!.customers!.last_name }}
-                  } @else {
-                    Walk-in
-                  }
-                </span>
+                <span class="value">{{ selectedSale()?.customer_id ? getCustomerName(selectedSale()!.customer_id!) : 'Walk-in' }}</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Cashier</span>
+                <span class="value">{{ selectedSale()?.cashier || 'Admin' }}</span>
               </div>
             </div>
 
@@ -743,14 +748,28 @@ export class SalesComponent implements OnInit {
   dateFrom = signal('');
   dateTo = signal('');
   statusFilter = signal('');
+  paymentFilter = signal('');
   showDetailsModal = signal(false);
   selectedSale = signal<SaleRow | null>(null);
   saleItems = signal<SaleItemRow[]>([]);
+  
+  customersCache = new Map<string, string>();
 
   totalSales = signal(0);
   averageSale = signal(0);
 
+  formatTimestamp = (date: string) => date ? posService.formatTimestamp(date) : '';
+
   async ngOnInit(): Promise<void> {
+    // Load customers into memory for quick lookups
+    try {
+      const custRaw = localStorage.getItem('ericko_pos_customers');
+      if (custRaw) {
+        const custs = JSON.parse(custRaw);
+        custs.forEach((c: any) => this.customersCache.set(c.id, `${c.first_name} ${c.last_name}`));
+      }
+    } catch {}
+
     // Set default date range to last 30 days
     const today = new Date();
     const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30);
@@ -764,27 +783,34 @@ export class SalesComponent implements OnInit {
     }
   }
 
-  async loadSales(): Promise<void> {
-    const { data, error } = await supabase
-      .from('sales')
-      .select(`
-        id, receipt_number, sale_date, subtotal, discount_amount, tax_amount,
-        total_amount, amount_paid, change_amount, status, notes,
-        customers(first_name, last_name),
-        branches(name)
-      `)
-      .order('sale_date', { ascending: false })
-      .limit(100);
-
-    if (error) throw error;
-    this.sales.set(data as unknown as SaleRow[] || []);
-    this.applyFilters();
-    this.calculateTotals();
+  getCustomerName(id: string): string {
+    return this.customersCache.get(id) || 'Unknown Customer';
+  }
+  
+  getPaymentMethodName(id: string | undefined): string {
+    if (!id) return 'Unknown';
+    const dict: Record<string, string> = { '1': 'Cash', '2': 'M-Pesa', '3': 'Card', '4': 'Bank', '5': 'Credit Sale' };
+    return dict[id] || 'Other';
   }
 
-  parseFloat(value: string | undefined): number {
+  async loadSales(): Promise<void> {
+    try {
+      const raw = localStorage.getItem('ericko_pos_sales');
+      const sales: SaleRow[] = raw ? JSON.parse(raw) : [];
+      // Sort newest first
+      sales.sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
+      
+      this.sales.set(sales);
+      this.applyFilters();
+      this.calculateTotals();
+    } catch (e) {
+      this.toast.error('Failed to load sales history');
+    }
+  }
+
+  parseFloat(value: string | undefined | number): number {
     if (!value) return 0;
-    return parseFloat(value) || 0;
+    return typeof value === 'string' ? parseFloat(value) || 0 : value;
   }
 
   applyFilters(): void {
@@ -793,9 +819,14 @@ export class SalesComponent implements OnInit {
     const fromDate = this.dateFrom();
     const toDate = this.dateTo();
     const status = this.statusFilter();
+    const payment = this.paymentFilter();
 
     if (query) {
-      filtered = filtered.filter(s => s.receipt_number.toLowerCase().includes(query));
+      filtered = filtered.filter(s => {
+        const custName = s.customer_id ? this.getCustomerName(s.customer_id).toLowerCase() : 'walk-in';
+        const cashier = (s.cashier || 'admin').toLowerCase();
+        return s.receipt_number.toLowerCase().includes(query) || custName.includes(query) || cashier.includes(query);
+      });
     }
 
     if (fromDate) {
@@ -810,6 +841,10 @@ export class SalesComponent implements OnInit {
 
     if (status) {
       filtered = filtered.filter(s => s.status === status);
+    }
+    
+    if (payment) {
+      filtered = filtered.filter(s => s.payments?.[0]?.payment_method_id === payment);
     }
 
     this.filteredSales.set(filtered);
@@ -846,16 +881,16 @@ export class SalesComponent implements OnInit {
     this.applyFilters();
     this.calculateTotals();
   }
+  
+  onPaymentFilter(event: Event): void {
+    this.paymentFilter.set((event.target as HTMLSelectElement).value);
+    this.applyFilters();
+    this.calculateTotals();
+  }
 
   async viewSaleDetails(sale: SaleRow): Promise<void> {
     this.selectedSale.set(sale);
-
-    const { data } = await supabase
-      .from('sale_items')
-      .select('product_name, quantity, unit_price, line_total')
-      .eq('sale_id', sale.id);
-
-    this.saleItems.set(data || []);
+    this.saleItems.set(sale.items || []);
     this.showDetailsModal.set(true);
   }
 
@@ -888,16 +923,16 @@ export class SalesComponent implements OnInit {
       const result = await printerService.printReceipt({
         receiptNumber: sale.receipt_number,
         saleDate: sale.sale_date,
-        customerName: sale.customers ? `${sale.customers.first_name} ${sale.customers.last_name}` : null,
+        customerName: sale.customer_id ? this.getCustomerName(sale.customer_id) : null,
         items,
-        subtotal: parseFloat(sale.subtotal),
-        discount: parseFloat(sale.discount_amount),
-        tax: parseFloat(sale.tax_amount),
-        total: parseFloat(sale.total_amount),
-        paid: parseFloat(sale.amount_paid),
-        change: parseFloat(sale.change_amount),
-        paymentMethod: 'Receipt Reprint',
-        servedBy: null
+        subtotal: this.parseFloat(sale.subtotal),
+        discount: this.parseFloat(sale.discount_amount),
+        tax: this.parseFloat(sale.tax_amount),
+        total: this.parseFloat(sale.total_amount),
+        paid: this.parseFloat(sale.amount_paid),
+        change: this.parseFloat(sale.change_amount),
+        paymentMethod: this.getPaymentMethodName(sale.payments?.[0]?.payment_method_id) + ' (Reprint)',
+        servedBy: sale.cashier || 'Admin'
       });
       if (!result.success) {
         this.toast.warning('Printer not reachable. Check printer settings.');
@@ -913,12 +948,10 @@ export class SalesComponent implements OnInit {
     if (!confirm(`Void sale ${sale.receipt_number}? This cannot be undone.`)) return;
 
     try {
-      const { error } = await supabase
-        .from('sales')
-        .update({ status: 'voided' })
-        .eq('id', sale.id);
-
-      if (error) throw error;
+      const allSales = this.sales();
+      const updated = allSales.map(s => s.id === sale.id ? { ...s, status: 'voided' } : s);
+      localStorage.setItem('ericko_pos_sales', JSON.stringify(updated));
+      
       await this.loadSales();
       this.toast.success(`Sale ${sale.receipt_number} voided successfully!`);
     } catch (error: any) {

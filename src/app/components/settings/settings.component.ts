@@ -1,7 +1,6 @@
 import { Component, signal, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { supabase } from '../../../core/services/supabase.service';
 import { printerService, PrintSettings } from '../../../core/services/printer.service';
 import { ToastService } from '../../../core/services/toast.service';
 
@@ -142,6 +141,17 @@ interface SettingRow {
                 </div>
               </div>
               <div class="form-grid single-col">
+                <div class="form-group" [class.disabled]="settings().receipt_show_logo !== 'true'">
+                  <label>Logo Upload (max 100KB)</label>
+                  <input type="file" accept="image/png, image/jpeg" (change)="onLogoUpload($event)" [disabled]="settings().receipt_show_logo !== 'true'" />
+                  <span class="hint">Recommended: Black & White PNG or JPG. Image is converted to Base64.</span>
+                  @if (settings().logo_base64) {
+                    <div style="margin-top: 0.5rem; text-align: center; background: #fff; padding: 0.5rem; width: fit-content; border-radius: 4px;">
+                      <img [src]="settings().logo_base64" alt="Receipt Logo" style="max-height: 80px;" />
+                      <button (click)="removeLogo()" style="display: block; margin: 0.5rem auto 0; background: #ef4444; color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer;">Remove Logo</button>
+                    </div>
+                  }
+                </div>
                 <div class="form-group">
                   <label>Custom Header Line (optional)</label>
                   <input type="text" [(value)]="settings().receipt_header_line" placeholder="e.g. Welcome to our store" />
@@ -832,7 +842,8 @@ export class SettingsComponent implements OnInit {
     receipt_show_item_count: 'true',
     receipt_show_subtotal: 'true',
     receipt_show_change: 'true',
-    cashier_name: ''
+    cashier_name: '',
+    logo_base64: ''
   });
 
   async ngOnInit(): Promise<void> {
@@ -857,26 +868,38 @@ export class SettingsComponent implements OnInit {
     this.settings.update(s => ({ ...s, [key]: checked ? 'true' : 'false' }));
   }
 
+  onLogoUpload(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const file = input.files[0];
+      if (file.size > 150000) { // Limit to ~150KB
+        this.toast.error('Logo file size must be less than 150KB.');
+        input.value = '';
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        this.settings.update(s => ({ ...s, logo_base64: base64 }));
+        this.toast.success('Logo uploaded and converted successfully!');
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  removeLogo(): void {
+    this.settings.update(s => ({ ...s, logo_base64: '' }));
+    this.toast.info('Logo removed.');
+  }
+
   async saveSettings(): Promise<void> {
     this.isSaving.set(true);
     this.saveMessage.set('');
 
     try {
       const currentSettings = this.settings();
-      const updates: { key: string; value: string; description?: string }[] = [];
-
-      for (const [key, value] of Object.entries(currentSettings) as [string, string][]) {
-        updates.push({ key, value });
-      }
-
-      // Update each setting
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('system_settings')
-          .upsert({ key: update.key, value: update.value }, { onConflict: 'key' });
-
-        if (error) throw error;
-      }
+      localStorage.setItem('ericko_pos_settings', JSON.stringify(currentSettings));
 
       this.saveMessage.set('Settings saved successfully!');
       this.toast.success('Settings saved successfully!');

@@ -1,5 +1,6 @@
 import { ProductWithStock, Category } from '../models/product.model';
 import { CartItem, PaymentMethod, Customer, Branch, Terminal, SystemSetting } from '../models/sale.model';
+import { BehaviorSubject } from 'rxjs';
 
 const API_BASE_URL = 'http://localhost/Ericko-Enterprise-POS-main/api';
 
@@ -8,6 +9,28 @@ export class PosService {
   private terminal: Terminal | null = { id: 'dummy-term', branch_id: 'dummy-branch', code: 'T01', name: 'Terminal 1', is_active: true };
   private warehouseId: string | null = 'dummy-wh';
   private settings: Map<string, string> = new Map([['receipt_prefix', 'REC']]);
+
+  // Real-time synchronization
+  public saleCompleted$ = new BehaviorSubject<void>(undefined);
+
+  // Formatting helper
+  formatTimestamp(dateStr: string): string {
+    const d = new Date(dateStr);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const seconds = d.getSeconds().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // the hour '0' should be '12'
+    const strTime = hours.toString().padStart(2, '0') + ':' + minutes + ':' + seconds + ' ' + ampm;
+    
+    return `${day} ${month} ${year}, ${strTime}`;
+  }
 
   async initialize(): Promise<void> {
     // Mocked for simplicity
@@ -81,7 +104,10 @@ export class PosService {
   async getPaymentMethods(): Promise<PaymentMethod[]> {
     return [
       { id: '1', name: 'Cash', code: 'CASH', is_active: true, requires_reference: false },
-      { id: '2', name: 'M-Pesa', code: 'MPESA', is_active: true, requires_reference: true }
+      { id: '2', name: 'M-Pesa', code: 'MPESA', is_active: true, requires_reference: true },
+      { id: '3', name: 'Card', code: 'CARD', is_active: true, requires_reference: true },
+      { id: '4', name: 'Bank', code: 'BANK', is_active: true, requires_reference: true },
+      { id: '5', name: 'Credit Sale', code: 'CREDIT', is_active: true, requires_reference: false }
     ];
   }
 
@@ -135,6 +161,7 @@ export class PosService {
       change_amount: changeAmount,
       status: 'completed',
       notes: notes || null,
+      cashier: 'Admin', // Default cashier for now
       items: items.map(item => ({
         product_id: item.product_id,
         product_name: item.product_name,
@@ -152,6 +179,9 @@ export class PosService {
       const sales = raw ? JSON.parse(raw) : [];
       sales.push(saleRecord);
       localStorage.setItem('ericko_pos_sales', JSON.stringify(sales));
+      
+      // Trigger real-time update
+      this.saleCompleted$.next();
     } catch (e) {
       console.error('Could not persist sale to localStorage:', e);
     }

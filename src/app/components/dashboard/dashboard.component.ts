@@ -1,13 +1,29 @@
-import { Component, signal, OnInit, AfterViewInit } from '@angular/core';
+import { Component, signal, OnInit, AfterViewInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { supabase } from '../../../core/services/supabase.service';
+import { posService } from '../../../core/services/pos.service';
+import { Subscription } from 'rxjs';
 
 interface SalesSummary {
   todaySales: number;
   todayTransactions: number;
   weekSales: number;
   monthSales: number;
+  customersServed: number;
+  productsSold: number;
+  cashSales: number;
+  mpesaSales: number;
+  cardSales: number;
+  bankSales: number;
+}
+
+interface PaymentSummary {
+  cashTotal: number; cashCount: number;
+  mpesaTotal: number; mpesaCount: number;
+  cardTotal: number; cardCount: number;
+  bankTotal: number; bankCount: number;
+  creditTotal: number; creditCount: number;
+  grandTotal: number;
 }
 
 interface RecentSale {
@@ -16,6 +32,7 @@ interface RecentSale {
   sale_date: string;
   total_amount: string;
   status: string;
+  paymentMethod: string;
 }
 
 interface TopProduct {
@@ -61,35 +78,90 @@ interface StockItem {
             <div class="card-icon blue">&#128176;</div>
             <div class="card-content">
               <span class="card-label">Today's Sales</span>
-              <span class="card-value">KES {{ animatedTodaySales() | number:'1.0-2' }}</span>
+              <span class="card-value">KES {{ summary().todaySales | number:'1.0-2' }}</span>
               <span class="card-sub">{{ summary().todayTransactions }} transactions</span>
+            </div>
+          </div>
+          
+          <div class="summary-card">
+            <div class="card-icon green">&#128181;</div>
+            <div class="card-content">
+              <span class="card-label">Cash Sales</span>
+              <span class="card-value">KES {{ summary().cashSales | number:'1.0-2' }}</span>
             </div>
           </div>
 
           <div class="summary-card">
-            <div class="card-icon green">&#128200;</div>
+            <div class="card-icon green">&#128241;</div>
             <div class="card-content">
-              <span class="card-label">This Week</span>
-              <span class="card-value">KES {{ animatedWeekSales() | number:'1.0-2' }}</span>
-              <span class="card-sub">{{ summary().todayTransactions }} total orders</span>
+              <span class="card-label">M-Pesa Sales</span>
+              <span class="card-value">KES {{ summary().mpesaSales | number:'1.0-2' }}</span>
             </div>
           </div>
 
           <div class="summary-card">
             <div class="card-icon teal">&#128179;</div>
             <div class="card-content">
-              <span class="card-label">This Month</span>
-              <span class="card-value">KES {{ animatedMonthSales() | number:'1.0-2' }}</span>
-              <span class="card-sub">Monthly revenue</span>
+              <span class="card-label">Card & Bank</span>
+              <span class="card-value">KES {{ (summary().cardSales + summary().bankSales) | number:'1.0-2' }}</span>
             </div>
           </div>
 
-          <div class="summary-card clickable" routerLink="/products">
-            <div class="card-icon orange">&#128230;</div>
+          <div class="summary-card">
+            <div class="card-icon orange">&#128101;</div>
             <div class="card-content">
-              <span class="card-label">Low Stock Items</span>
-              <span class="card-value" [class.warn]="lowStockItems().length > 0">{{ lowStockItems().length }}</span>
-              <span class="card-sub link">View products &#8594;</span>
+              <span class="card-label">Customers Served</span>
+              <span class="card-value">{{ summary().customersServed }}</span>
+            </div>
+          </div>
+          
+          <div class="summary-card">
+            <div class="card-icon blue">&#128230;</div>
+            <div class="card-content">
+              <span class="card-label">Products Sold</span>
+              <span class="card-value">{{ summary().productsSold }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Real-Time Payment Summary Section -->
+        <div class="dashboard-card payment-summary anim-fade-in-up" style="margin-bottom: 1.5rem;">
+          <div class="card-header">
+            <h3>Real-Time Payment Summary (Today)</h3>
+            <span class="live-indicator"><span class="pulse"></span> Live</span>
+          </div>
+          <div class="card-body">
+            <div class="payment-grid">
+              <div class="payment-stat">
+                <span class="p-label">💵 Cash</span>
+                <span class="p-value">KES {{ payments().cashTotal | number:'1.0-2' }}</span>
+                <span class="p-count">{{ payments().cashCount }} txns</span>
+              </div>
+              <div class="payment-stat">
+                <span class="p-label">📱 M-Pesa</span>
+                <span class="p-value">KES {{ payments().mpesaTotal | number:'1.0-2' }}</span>
+                <span class="p-count">{{ payments().mpesaCount }} txns</span>
+              </div>
+              <div class="payment-stat">
+                <span class="p-label">💳 Card</span>
+                <span class="p-value">KES {{ payments().cardTotal | number:'1.0-2' }}</span>
+                <span class="p-count">{{ payments().cardCount }} txns</span>
+              </div>
+              <div class="payment-stat">
+                <span class="p-label">🏦 Bank</span>
+                <span class="p-value">KES {{ payments().bankTotal | number:'1.0-2' }}</span>
+                <span class="p-count">{{ payments().bankCount }} txns</span>
+              </div>
+              <div class="payment-stat">
+                <span class="p-label">📒 Credit Sales</span>
+                <span class="p-value">KES {{ payments().creditTotal | number:'1.0-2' }}</span>
+                <span class="p-count">{{ payments().creditCount }} txns</span>
+              </div>
+              <div class="payment-stat grand-total">
+                <span class="p-label">Grand Total</span>
+                <span class="p-value">KES {{ payments().grandTotal | number:'1.0-2' }}</span>
+                <span class="p-count">All Methods</span>
+              </div>
             </div>
           </div>
         </div>
@@ -110,6 +182,7 @@ interface StockItem {
                       <th>Receipt</th>
                       <th>Time</th>
                       <th>Amount</th>
+                      <th>Method</th>
                       <th>Status</th>
                     </tr>
                   </thead>
@@ -117,8 +190,9 @@ interface StockItem {
                     @for (sale of recentSales(); track sale.id) {
                       <tr>
                         <td class="receipt-cell">{{ sale.receipt_number }}</td>
-                        <td>{{ sale.sale_date | date:'short' }}</td>
+                        <td>{{ sale.sale_date }}</td>
                         <td class="amount-cell">KES {{ parseFloat(sale.total_amount) | number:'1.0-2' }}</td>
+                        <td>{{ sale.paymentMethod }}</td>
                         <td>
                           <span class="status-badge" [class.completed]="sale.status === 'completed'" [class.voided]="sale.status === 'voided'">
                             {{ sale.status }}
@@ -161,63 +235,6 @@ interface StockItem {
                   <p>No product data yet</p>
                 </div>
               }
-            </div>
-          </div>
-
-          <!-- Low Stock Alert -->
-          <div class="dashboard-card alert-card">
-            <div class="card-header">
-              <h3>Low Stock Alert</h3>
-              <a routerLink="/products" class="view-all">Manage &#8594;</a>
-            </div>
-            <div class="card-body">
-              @if (lowStockItems().length > 0) {
-                <div class="low-stock-list">
-                  @for (item of lowStockItems().slice(0, 5); track item.sku) {
-                    <div class="low-stock-item">
-                      <div class="stock-info">
-                        <span class="item-name">{{ item.name }}</span>
-                        <span class="item-sku">{{ item.sku }}</span>
-                      </div>
-                      <div class="stock-level" [class.critical]="item.stock_quantity === 0" [class.warning]="item.stock_quantity > 0 && item.stock_quantity <= item.reorder_level">
-                        {{ item.stock_quantity }} / {{ item.reorder_level }}
-                      </div>
-                    </div>
-                  }
-                </div>
-              } @else {
-                <div class="empty-state success">
-                  <span class="empty-icon">&#10003;</span>
-                  <p>All products are well stocked</p>
-                </div>
-              }
-            </div>
-          </div>
-
-          <!-- Quick Actions -->
-          <div class="dashboard-card actions-card">
-            <div class="card-header">
-              <h3>Quick Actions</h3>
-            </div>
-            <div class="card-body">
-              <div class="quick-actions">
-                <a routerLink="/pos" class="quick-action">
-                  <span class="action-icon blue">&#128722;</span>
-                  <span>New Sale</span>
-                </a>
-                <a routerLink="/products" class="quick-action">
-                  <span class="action-icon green">&#128230;</span>
-                  <span>Products</span>
-                </a>
-                <a routerLink="/customers" class="quick-action">
-                  <span class="action-icon teal">&#128101;</span>
-                  <span>Customers</span>
-                </a>
-                <a routerLink="/sales" class="quick-action">
-                  <span class="action-icon orange">&#128202;</span>
-                  <span>Reports</span>
-                </a>
-              </div>
             </div>
           </div>
         </div>
@@ -634,119 +651,190 @@ interface StockItem {
 
     .empty-icon { font-size: 2rem; margin-bottom: 0.5rem; }
     .empty-state.success .empty-icon { color: #22c55e; }
+    
+    /* Payment Summary */
+    .payment-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+    }
+    .payment-stat {
+      background: #0f172a;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      border: 1px solid #334155;
+    }
+    .payment-stat.grand-total {
+      background: linear-gradient(135deg, #1e3a8a, #312e81);
+      border-color: #4f46e5;
+    }
+    .p-label { font-size: 0.875rem; color: #94a3b8; margin-bottom: 0.5rem; font-weight: 600; }
+    .p-value { font-size: 1.25rem; color: #fff; font-weight: bold; margin-bottom: 0.25rem; }
+    .p-count { font-size: 0.75rem; color: #64748b; }
+    
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #10b981;
+      font-weight: bold;
+      background: rgba(16, 185, 129, 0.1);
+      padding: 0.25rem 0.5rem;
+      border-radius: 1rem;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
   `]
 })
-export class DashboardComponent implements OnInit, AfterViewInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   isLoading = signal(true);
   summary = signal<SalesSummary>({
-    todaySales: 0,
-    todayTransactions: 0,
-    weekSales: 0,
-    monthSales: 0
+    todaySales: 0, todayTransactions: 0, weekSales: 0, monthSales: 0,
+    customersServed: 0, productsSold: 0, cashSales: 0, mpesaSales: 0, cardSales: 0, bankSales: 0
   });
+  
+  payments = signal<PaymentSummary>({
+    cashTotal: 0, cashCount: 0, mpesaTotal: 0, mpesaCount: 0,
+    cardTotal: 0, cardCount: 0, bankTotal: 0, bankCount: 0,
+    creditTotal: 0, creditCount: 0, grandTotal: 0
+  });
+
   recentSales = signal<RecentSale[]>([]);
   topProducts = signal<TopProduct[]>([]);
   lowStockItems = signal<StockItem[]>([]);
-
-  animatedTodaySales = signal(0);
-  animatedWeekSales = signal(0);
-  animatedMonthSales = signal(0);
-
   parseFloat = (value: string) => parseFloat(value) || 0;
+  
+  private syncSub?: Subscription;
 
-  async ngOnInit(): Promise<void> {
-    try {
-      await this.loadDashboardData();
-    } catch (error) {
-      console.error('Failed to load dashboard:', error);
-    } finally {
-      this.isLoading.set(false);
+  ngOnInit(): void {
+    this.loadDashboardData();
+    
+    // Subscribe to local reactive updates (same tab)
+    this.syncSub = posService.saleCompleted$.subscribe(() => {
+      if (!this.isLoading()) this.loadDashboardData();
+    });
+    
+    // Subscribe to storage events (cross tab)
+    window.addEventListener('storage', this.handleStorageEvent);
+    this.isLoading.set(false);
+  }
+
+  ngOnDestroy(): void {
+    this.syncSub?.unsubscribe();
+    window.removeEventListener('storage', this.handleStorageEvent);
+  }
+  
+  private handleStorageEvent = (e: StorageEvent) => {
+    if (e.key === 'ericko_pos_sales') {
+      this.loadDashboardData();
     }
-  }
+  };
 
-  ngAfterViewInit(): void {
-    this.animateCounters();
-  }
+  loadDashboardData(): void {
+    try {
+      const rawSales = localStorage.getItem('ericko_pos_sales');
+      const sales: any[] = rawSales ? JSON.parse(rawSales) : [];
+      
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const startOfWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-  private animateCounters(): void {
-    this.animateValue(this.animatedTodaySales, 0, this.summary().todaySales, 800);
-    this.animateValue(this.animatedWeekSales, 0, this.summary().weekSales, 1000);
-    this.animateValue(this.animatedMonthSales, 0, this.summary().monthSales, 1200);
-  }
+      let todaySales = 0, weekSales = 0, monthSales = 0;
+      let cashSales = 0, mpesaSales = 0, cardSales = 0, bankSales = 0, creditSales = 0;
+      let cashCount = 0, mpesaCount = 0, cardCount = 0, bankCount = 0, creditCount = 0;
+      let productsSold = 0;
+      const customersToday = new Set<string>();
 
-  private animateValue(target: import('@angular/core').WritableSignal<number>, start: number, end: number, duration: number): void {
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const progress = Math.min((now - startTime) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      target.set(Math.round(start + (end - start) * eased));
-      if (progress < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }
+      const todaySalesList = [];
 
-  async loadDashboardData(): Promise<void> {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-    const startOfWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7).toISOString();
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
-
-    const [todayData, weekData, monthData] = await Promise.all([
-      supabase.from('sales').select('total_amount').gte('sale_date', startOfDay),
-      supabase.from('sales').select('total_amount').gte('sale_date', startOfWeek),
-      supabase.from('sales').select('total_amount').gte('sale_date', startOfMonth)
-    ]);
-
-    this.summary.set({
-      todaySales: todayData.data?.reduce((sum: number, s: { total_amount: string }) => sum + parseFloat(s.total_amount), 0) || 0,
-      todayTransactions: todayData.data?.length || 0,
-      weekSales: weekData.data?.reduce((sum: number, s: { total_amount: string }) => sum + parseFloat(s.total_amount), 0) || 0,
-      monthSales: monthData.data?.reduce((sum: number, s: { total_amount: string }) => sum + parseFloat(s.total_amount), 0) || 0
-    });
-
-    const { data: recentData } = await supabase
-      .from('sales')
-      .select('id, receipt_number, sale_date, total_amount, status')
-      .order('sale_date', { ascending: false })
-      .limit(10);
-
-    this.recentSales.set(recentData || []);
-
-    const { data: topData } = await supabase
-      .from('sale_items')
-      .select('product_name, quantity, line_total')
-      .order('quantity', { ascending: false })
-      .limit(5);
-
-    const aggregated: Record<string, TopProduct> = {};
-    (topData || []).forEach((item: { product_name: string; quantity: string; line_total: string }) => {
-      if (!aggregated[item.product_name]) {
-        aggregated[item.product_name] = { product_name: item.product_name, quantity: 0, total: 0 };
+      for (const sale of sales) {
+        if (sale.status !== 'completed') continue;
+        const d = new Date(sale.sale_date);
+        const total = parseFloat(sale.total_amount) || 0;
+        
+        if (d >= startOfMonth) monthSales += total;
+        if (d >= startOfWeek) weekSales += total;
+        
+        if (d >= startOfDay) {
+          todaySales += total;
+          todaySalesList.push(sale);
+          if (sale.customer_id) customersToday.add(sale.customer_id);
+          
+          (sale.items || []).forEach((item: any) => {
+            productsSold += parseFloat(item.quantity) || 0;
+          });
+          
+          // Payment method breakdown
+          (sale.payments || []).forEach((p: any) => {
+            const amt = parseFloat(p.amount) || 0;
+            if (p.payment_method_id === '1' || String(p.payment_method_id).toUpperCase() === 'CASH') { cashSales += amt; cashCount++; }
+            if (p.payment_method_id === '2' || String(p.payment_method_id).toUpperCase() === 'MPESA') { mpesaSales += amt; mpesaCount++; }
+            if (p.payment_method_id === '3' || String(p.payment_method_id).toUpperCase() === 'CARD') { cardSales += amt; cardCount++; }
+            if (p.payment_method_id === '4' || String(p.payment_method_id).toUpperCase() === 'BANK') { bankSales += amt; bankCount++; }
+            if (p.payment_method_id === '5' || String(p.payment_method_id).toUpperCase() === 'CREDIT') { creditSales += amt; creditCount++; }
+          });
+        }
       }
-      aggregated[item.product_name].quantity += parseFloat(item.quantity);
-      aggregated[item.product_name].total += parseFloat(item.line_total);
-    });
 
-    this.topProducts.set(Object.values(aggregated).sort((a, b) => b.total - a.total));
+      this.summary.set({
+        todaySales, weekSales, monthSales,
+        todayTransactions: todaySalesList.length,
+        customersServed: customersToday.size,
+        productsSold, cashSales, mpesaSales, cardSales, bankSales
+      });
+      
+      this.payments.set({
+        cashTotal: cashSales, cashCount,
+        mpesaTotal: mpesaSales, mpesaCount,
+        cardTotal: cardSales, cardCount,
+        bankTotal: bankSales, bankCount,
+        creditTotal: creditSales, creditCount,
+        grandTotal: todaySales
+      });
 
-    const { data: stockData } = await supabase
-      .from('products')
-      .select('name, sku, reorder_level, stock_levels(quantity)')
-      .eq('is_active', true)
-      .eq('is_deleted', false);
+      // Recent Sales
+      const sorted = [...sales].sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
+      this.recentSales.set(sorted.slice(0, 10).map(s => ({
+        id: s.id,
+        receipt_number: s.receipt_number,
+        sale_date: posService.formatTimestamp(s.sale_date),
+        total_amount: s.total_amount,
+        status: s.status,
+        paymentMethod: s.payments?.[0]?.payment_method_id || 'Cash'
+      })));
 
-    const lowStock = (stockData || [])
-      .filter((p: any) => {
-        const qty = p.stock_levels?.[0]?.quantity || 0;
-        return qty <= p.reorder_level;
-      })
-      .map((p: any) => ({
-        name: p.name,
-        sku: p.sku,
-        stock_quantity: p.stock_levels?.[0]?.quantity || 0,
-        reorder_level: p.reorder_level
-      }));
+      // Top Products
+      const productAgg: Record<string, TopProduct> = {};
+      sales.forEach(sale => {
+        if (sale.status !== 'completed') return;
+        (sale.items || []).forEach((item: any) => {
+          if (!productAgg[item.product_name]) {
+            productAgg[item.product_name] = { product_name: item.product_name, quantity: 0, total: 0 };
+          }
+          productAgg[item.product_name].quantity += parseFloat(item.quantity) || 0;
+          productAgg[item.product_name].total += parseFloat(item.line_total) || 0;
+        });
+      });
+      this.topProducts.set(Object.values(productAgg).sort((a, b) => b.total - a.total).slice(0, 5));
 
-    this.lowStockItems.set(lowStock);
+    } catch (e) {
+      console.error('Failed to load dashboard data:', e);
+    }
   }
 }
