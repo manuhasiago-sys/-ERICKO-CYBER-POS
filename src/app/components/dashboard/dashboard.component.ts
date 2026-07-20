@@ -808,8 +808,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
         grandTotal: todaySales
       });
 
-      // Recent Sales
-      const sorted = [...sales].sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
+      // Recent Sales (Today Only)
+      const salesTodayAll = sales.filter(s => new Date(s.sale_date) >= startOfDay);
+      const sorted = [...salesTodayAll].sort((a, b) => new Date(b.sale_date).getTime() - new Date(a.sale_date).getTime());
       this.recentSales.set(sorted.slice(0, 10).map(s => ({
         id: s.id,
         receipt_number: s.receipt_number,
@@ -819,10 +820,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
         paymentMethod: s.payments?.[0]?.payment_method_id || 'Cash'
       })));
 
-      // Top Products
+      // Top Products (Today Only)
       const productAgg: Record<string, TopProduct> = {};
-      sales.forEach(sale => {
-        if (sale.status !== 'completed') return;
+      todaySalesList.forEach(sale => {
         (sale.items || []).forEach((item: any) => {
           if (!productAgg[item.product_name]) {
             productAgg[item.product_name] = { product_name: item.product_name, quantity: 0, total: 0 };
