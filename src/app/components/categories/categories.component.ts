@@ -49,6 +49,7 @@ function saveToStorage(cats: Category[]): void {
                 <th>Description</th>
                 <th>Display Order</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -64,10 +65,15 @@ function saveToStorage(cats: Category[]): void {
                       {{ cat.is_active ? 'Active' : 'Inactive' }}
                     </span>
                   </td>
+                  <td>
+                    <button class="btn-icon" (click)="editCategory(cat)" title="Edit">
+                      &#9998;
+                    </button>
+                  </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="4" class="empty-state">
+                  <td colspan="5" class="empty-state">
                     No categories found.
                   </td>
                 </tr>
@@ -91,7 +97,7 @@ function saveToStorage(cats: Category[]): void {
                 <label>Name <span class="required">*</span></label>
                 <input
                   type="text"
-                  [(ngModel)]="newCategory.name"
+                  [(ngModel)]="editingCategory.name"
                   name="name"
                   required
                   placeholder="e.g. Electronics"
@@ -101,25 +107,34 @@ function saveToStorage(cats: Category[]): void {
               <div class="form-group">
                 <label>Description</label>
                 <textarea
-                  [(ngModel)]="newCategory.description"
+                  [(ngModel)]="editingCategory.description"
                   name="description"
                   rows="3"
                   placeholder="Optional description"
                 ></textarea>
               </div>
 
-              <div class="form-group">
-                <label>Display Order</label>
-                <input
-                  type="number"
-                  [(ngModel)]="newCategory.display_order"
-                  name="display_order"
-                />
+              <div class="form-grid">
+                <div class="form-group">
+                  <label>Display Order</label>
+                  <input
+                    type="number"
+                    [(ngModel)]="editingCategory.display_order"
+                    name="display_order"
+                  />
+                </div>
+                <div class="form-group toggle-group" *ngIf="editingCategory.id">
+                  <label>Status</label>
+                  <div class="toggle-switch">
+                    <input type="checkbox" [(ngModel)]="editingCategory.is_active" name="is_active" id="activeToggle" />
+                    <label for="activeToggle">Active</label>
+                  </div>
+                </div>
               </div>
 
               <div class="modal-footer">
                 <button type="button" class="btn-secondary" (click)="closeModal()" [disabled]="saving()">Cancel</button>
-                <button type="submit" class="btn-primary" [disabled]="saving() || !newCategory.name">
+                <button type="submit" class="btn-primary" [disabled]="saving() || !editingCategory.name">
                   {{ saving() ? 'Saving...' : 'Save Category' }}
                 </button>
               </div>
@@ -380,6 +395,28 @@ function saveToStorage(cats: Category[]): void {
       gap: 1rem;
       margin-top: 2rem;
     }
+    
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    
+    .toggle-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+    }
+    
+    .toggle-switch {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #e2e8f0;
+    }
+    
+    .toggle-switch input[type="checkbox"] {
+      width: auto;
+    }
   `]
 })
 export class CategoriesComponent implements OnInit {
@@ -390,10 +427,11 @@ export class CategoriesComponent implements OnInit {
   showModal = signal(false);
   saving = signal(false);
 
-  newCategory = {
+  editingCategory: Partial<Category> = {
     name: '',
     description: '',
-    display_order: 0
+    display_order: 0,
+    is_active: true
   };
 
   ngOnInit() {
@@ -414,7 +452,12 @@ export class CategoriesComponent implements OnInit {
   }
 
   openModal() {
-    this.newCategory = { name: '', description: '', display_order: 0 };
+    this.editingCategory = { name: '', description: '', display_order: 0, is_active: true };
+    this.showModal.set(true);
+  }
+  
+  editCategory(cat: Category) {
+    this.editingCategory = { ...cat };
     this.showModal.set(true);
   }
 
@@ -423,22 +466,36 @@ export class CategoriesComponent implements OnInit {
   }
 
   saveCategory() {
-    if (!this.newCategory.name.trim()) return;
+    if (!this.editingCategory.name?.trim()) return;
 
     this.saving.set(true);
     try {
       const existing = loadFromStorage();
-      const newCat: Category = {
-        id: crypto.randomUUID(),
-        name: this.newCategory.name.trim(),
-        description: this.newCategory.description?.trim() || null,
-        display_order: this.newCategory.display_order ?? 0,
-        is_active: true
-      };
-      const updated = [...existing, newCat];
+      let updated: Category[];
+      
+      if (this.editingCategory.id) {
+        updated = existing.map(c => c.id === this.editingCategory.id ? {
+          ...c,
+          name: this.editingCategory.name!.trim(),
+          description: this.editingCategory.description?.trim() || null,
+          display_order: this.editingCategory.display_order ?? 0,
+          is_active: this.editingCategory.is_active ?? true
+        } : c);
+        this.toastService.success('Category updated successfully!');
+      } else {
+        const newCat: Category = {
+          id: crypto.randomUUID(),
+          name: this.editingCategory.name.trim(),
+          description: this.editingCategory.description?.trim() || null,
+          display_order: this.editingCategory.display_order ?? 0,
+          is_active: true
+        };
+        updated = [...existing, newCat];
+        this.toastService.success('Category added successfully!');
+      }
+      
       saveToStorage(updated);
       this.categories.set(updated);
-      this.toastService.success('Category added successfully!');
       this.closeModal();
     } catch (error) {
       this.toastService.error('Failed to save category');
